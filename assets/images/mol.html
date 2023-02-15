@@ -1,0 +1,2516 @@
+<!DOCTYPE html><html lang="en">
+
+	<head>
+		
+
+
+
+
+
+
+
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+
+<script type="text/javascript">
+
+(function() {
+
+	var extractDataFromResponse = function(response) {
+		var dataObject = response;
+		if(typeof response === "string") {
+			try {
+				dataObject = JSON.parse(response);
+			} catch(e) {
+				dataObject = undefined;
+			}
+		}
+		return dataObject;
+	};
+
+	var isPageRedirectUrlPresent = function(data) {
+		return data && data.pageRedirect && data.pageRedirect.url;
+	};
+
+	var originalAjax = jQuery.ajax;
+	jQuery.ajax = function(url, options) {
+		if ( typeof url === "object" ) {
+			options = url;
+			url = undefined;
+		}
+		options = options || {};
+
+		if (options.success) {
+			var originalSuccess = options.success;
+			options.success = function(response) {
+				var data = extractDataFromResponse(response);
+				if(isPageRedirectUrlPresent(data)) {
+					document.location.href = data.pageRedirect.url;
+				} else {
+					originalSuccess.apply(this, arguments);
+				}
+			}
+		}
+
+		if(options.complete) {
+			var originalComplete = options.complete;
+			options.complete = function( jqXHR, status, responseText ) {
+				if(jqXHR && jqXHR.responseText) {
+					var data = extractDataFromResponse(jqXHR.responseText);
+					if (isPageRedirectUrlPresent(data)) {
+						document.location.href = data.pageRedirect.url;
+						return false;
+					}
+				}
+				originalComplete.apply(this, arguments);
+			}
+		}
+
+		var ajax = $.Deferred();
+
+		originalAjax(url, options)
+			.done(function(response) {
+				var data = extractDataFromResponse(response);
+				if(isPageRedirectUrlPresent(data)) {
+					document.location.href = data.pageRedirect.url;
+					ajax.reject();
+				} else {
+					ajax.resolve(response);
+				}
+			})
+			.fail(ajax.reject);
+
+		return ajax.promise();
+	};
+})();
+</script><!-- Declare General functions -->
+<script>
+	$.fn.bindFirst=function bindFirst(eventType,fn) {	
+	    this.on(eventType, fn);
+	    this.each(function() {
+	    	var handlers = $._data(this, 'events')[eventType.split('.')[0]];
+	        var handler = handlers.pop();
+	        handlers.splice(0, 0, handler);
+	    });
+	}
+	
+   	function noErrorsOnForm(siteForm) {
+		//add information_message negative
+		var errors = $(siteForm).find('.form_field_error');
+		return errors.length === 0;
+	}
+   		
+   	function getScriptParentNode(scriptId){
+   		var scriptTag = document.getElementById(scriptId);
+   		if (!scriptTag) return null;
+   		
+   		return scriptTag.parentNode;
+   	}
+   	
+   	function isParentValid(parent){
+   		if (!parent) return false;
+   		if ("BODY" === parent.tagName) return false;
+   		
+   		return true;
+   	}
+
+   	function findProductIndex(basket, product, matcher) {
+   	    var products = basket.products;
+   	    var index = -1;
+   	    for (var i = 0; i < products.length; i++) {
+   	        if (matcher(products[i], product) == true) {
+   	            index = i;
+   	            break;
+   	        }
+   	    }
+   	    return index;
+   	}
+
+	function setProductData(productEnclosingTag, productName, productLocation, productPosition){
+   		$(productEnclosingTag).data('gtmProductLocation', productLocation);
+   		$(productEnclosingTag).data('gtmProductPosition', productPosition);
+   		$(productEnclosingTag).data('gtmProductName', productName);	
+	}
+
+   	function productLocationNotSet(productEnclosingTag){    		
+   		return !$(productEnclosingTag).data('gtmProductLocation');
+   	}
+   	
+   	function getProductLocation(currentElement, defaultLocation){
+   		var productLocation = $(currentElement).closest(":data(gtmProductLocation)").data("gtmProductLocation");
+   		if (!productLocation) productLocation = defaultLocation;
+   		
+   		return productLocation;
+   	}
+   	
+   	function getProductPosition(currentElement){
+   		var productPosition = $(currentElement).closest(':data(gtmProductPosition)').data('gtmProductPosition');
+   		
+   		return productPosition;
+   	}
+   	
+   	function getProductName(currentElement){
+   		var productName = $(currentElement).closest(':data(gtmProductName)').data('gtmProductName');
+   		
+   		return productName;
+   	}
+   	
+   	function addProductImpression(productObj){
+   		window.impressions = window.impressions || [];
+   		window.impressions.push(productObj);
+   	}
+   	
+   	function pushProductImpressionsOnReady() {
+   		$(document).ready(function() {
+   			if(window.impressions){
+   				dataLayer.push({
+   					'event': '',
+   					'': 'productImpression',
+   					'ecommerce': {
+   						 'impressions': window.impressions
+   				 	}
+   				}); 
+   			}
+   		});
+   	}
+
+   	function appendFulfilmentData(product, fulfilmentType, storeId, storeName) {
+   	    if("C&C" === fulfilmentType) {
+   	        product["store_ID"] = storeId;
+        	product["store_name"] = storeName;
+        	product["product_fulfillment"] = "C&C";
+        } else {
+            product["product_fulfillment"] = "Delivery";
+        }
+   	}
+
+   	function appendBasketAndSendGtmEvent(event, updateBasketFunction) {
+        $.ajax({
+            url: "/cart",
+            type: 'GET',
+            dataType: 'json',
+            headers: {
+                'Accept': 'application/json'
+            },
+            async : false,
+            contentType: 'application/json; charset=utf-8',
+            success: function (result) {
+                event.ecommerce.basket = result;
+                updateBasketFunction(result);
+                removeEntryNumberFromBasket(result);
+                dataLayer.push(event);
+            }
+        });
+   	}
+
+   	function removeEntryNumberFromBasket(basket) {
+   	    basket.products.forEach(function(product){
+   	        delete product.entry_number;
+   	    });
+   	}
+
+   	function isEqualProducts(actualProduct, targetProduct) {
+   	    if(targetProduct.product_code !== actualProduct.product_code) {
+   	        return false;
+   	    }
+   	    if(targetProduct.product_fulfillment !== actualProduct.product_fulfillment) {
+   	        return false;
+   	    }
+   	    if (targetProduct.product_fulfillment === "C&C" && targetProduct.store_name !== actualProduct.store_name) {
+   	        return false;
+   	    }
+   	    return true;
+   	}
+
+   	function findProductIndexInBasket(basket, targetProduct) {
+   	    return findProductIndex(basket, targetProduct, isEqualProducts);
+   	}
+
+   	function cloneProduct(product) {
+    	    //create product clone and append fulfilment related data for search product in basket
+    	    var productClone = {};
+    	    for (var prop in product) {
+    	        productClone[prop] = product[prop];
+    	    }
+    	    return productClone;
+    	}
+
+    function changeProductDeliveryMode(product, productToUpdate) {
+        productToUpdate.product_fulfillment = product.product_fulfillment;
+    	var storeIdProp = "store_ID";
+        var storeNameProp = "store_name";
+        if (product.product_fulfillment === "C&C") {
+            productToUpdate[storeIdProp] = product.store_ID;
+            productToUpdate[storeNameProp] = product.store_name;
+        } else {
+            delete productToUpdate[storeIdProp];
+            delete productToUpdate[storeNameProp];
+        }
+    }
+
+	function handleUpdateBasketEvent(eventType, product, currencyCode) {
+	    var event = {
+	        "event" : eventType,
+            "ecommerce" : {
+                "currencyCode" : currencyCode
+            }
+        };
+
+        var resultProductQuantity = product.product_quantity_new;
+        delete product.product_quantity_new;
+        if (!isValidProductQuantity(resultProductQuantity)) {
+            return;
+        }
+
+        var productCloneForBasketUpdate = cloneProduct(product);
+        productCloneForBasketUpdate.product_quantity = resultProductQuantity;
+
+        delete product.entry_number;
+        event.ecommerce['update'] = {"products": [product]};
+
+        appendBasketAndSendGtmEvent(event, updateBasket(productCloneForBasketUpdate));
+	}
+
+	function isValidProductQuantity(quantity) {
+        return (!isNaN(quantity)) && (quantity >= 0);
+    }
+
+	function updateBasket(product) {
+	    return function(basket) {
+	        var productIndex = findProductIndex(basket, product, hasEqualEntryNumber);
+	        if (productIndex == -1) {
+	            return;
+	        }
+	        var productToUpdate = basket.products[productIndex];
+	        productToUpdate.product_quantity = product.product_quantity;
+	        updateProductDeliveryMethod (productToUpdate, product);
+	        mergeDuplicatesInBasket(basket, productToUpdate, productIndex);
+	    }
+	}
+
+	function hasEqualEntryNumber(currentProduct, targetProduct) {
+	    return currentProduct.entry_number == targetProduct.entry_number;
+	}
+
+    function updateProductDeliveryMethod(productToUpdate, product) {
+        productToUpdate.product_fulfillment = product.product_fulfillment;
+        if (product.product_fulfillment === "C&C") {
+            productToUpdate.store_ID = product.store_ID;
+            productToUpdate.store_name = product.store_name;
+        } else {
+            delete productToUpdate.store_ID;
+            delete productToUpdate.store_name;
+        }
+    }
+
+    function mergeDuplicatesInBasket(basket, product, skipIndex) {
+        var duplicateIndex = findDuplicateIndexInBasket(basket, product, skipIndex);
+        if (duplicateIndex == -1) {
+            return;
+        } else {
+            //there are two similar products but with different product quantity
+            var duplicateProduct = basket.products[duplicateIndex];
+            product.product_quantity = (parseInt(product.product_quantity) + parseInt(duplicateProduct.product_quantity)).toString();
+            basket.products.splice(duplicateIndex, 1);
+        }
+    }
+
+    function findDuplicateIndexInBasket(basket, product, skipIndex) {
+        var duplicateIndex = -1;
+        for (var i = 0; i < basket.products.length; i++) {
+            if (i == skipIndex) {
+                continue;
+            }
+            if (isEqualProducts(basket.products[i], product)) {
+                duplicateIndex = i;
+                break;
+            }
+        }
+        return duplicateIndex;
+    }
+</script><!-- Google Tag Manager Data layer -->
+<script>
+dataLayer = [{
+	
+	currency : 'GBP', //OPT
+	agilOneAuthKey : '$2a$10$31AOGLhfY9/xL56G5lNKiemYslzCilZbHQf/6wC0FGAtWUAaz3Jt.',
+	customer_email : '',
+	
+		customer_new_existing : 'new', //OPT
+		customer_type: 'Guest',
+		trade_category: null,
+	
+	page_url : location.href, //REQ - if not currently being captured, you can use location.href
+
+    
+            platform : "website",
+        
+			page_type : 'Product Detail Page', //REQ - the page type being viewed by the user
+			page_name : 'Adjustable Drop Forged Steel 3 Piece Wrench Set | Wickes.co.uk', //REQ - the specific page identifier being viewed by the customer
+			basket_page_revenue : '', //OPT
+			total_items : '', //OPT
+			product_code : '149054', //OPT
+			product_name : 'Adjustable Drop Forged Steel 3 Piece Wrench Set', //OPT
+			product_price : '11.0', //OPT
+			product_quantity : '1', //OPT
+		
+	wickes_card_number : '' //OPT - Is not aplicable now
+}];
+</script>
+<!--  End Google Tag Manager Data layer -->
+
+<!-- Start Enhanced Ecommerce Analytics -->
+
+
+
+
+
+
+
+
+
+<script type="text/javascript">
+	dataLayer = window.dataLayer || [];
+	ACC = window.ACC || {};
+	ACC.eea = {
+        triggerProductClick: function(list, product) {
+             dataLayer.push({
+                event: "productClick",
+                ecommerce: {
+                    click: {
+                        actionField: {
+                            list: list
+                        },
+                        products: [$.extend({}, product)]
+                    }
+                },
+            });
+        },
+
+		createAddToCartEvent: function(product, position, params)
+		{
+			return {
+				event: "addToCart",
+				ecommerce: {
+					currencyCode: "GBP",
+					add: {
+						products: [
+							$.extend({
+								position: position,
+								quantity: params.quantity,
+								fulfillment: params.fulfillment || 'Delivery',
+								wisdomAddToDeliveryFlow: params.wisdomAddToDeliveryFlow
+							}, product)
+						]
+					}
+				}
+			};
+		},
+
+		triggerAddToCart: function(quantity, fulfillment, wisdomAddToDeliveryFlow, sku)
+		{
+			$(document).trigger("EEAddToCart", {
+				quantity: quantity,
+				fulfillment: fulfillment,
+				wisdomAddToDeliveryFlow: wisdomAddToDeliveryFlow,
+				sku: sku
+			});
+		},
+
+		handlePromotionClick: function(promotionElement) {
+			dataLayer.push({
+				event: "promotionClick",
+				ecommerce: {
+					promoClick: {
+						promotions: [{
+							id: $(promotionElement).closest("[id]").attr("id"),
+							name: $(promotionElement).closest("[title]").attr("title"),
+							creative: "not specified",
+							position: $(promotionElement).attr("data-eea-position")
+						}]
+					}
+				},
+			});
+		},
+
+		handlePromotionImpressions: function(promotionElements) {
+			var promotions = [];
+
+			promotionElements.each(function(i, promotionElement) {
+				promotions.push({
+					id: $(promotionElement).closest("[id]").attr("id"),
+					name: $(promotionElement).closest("[title]").attr("title"),
+					creative: "not specified",
+					position: $(promotionElement).attr("data-eea-position")
+				});
+			});
+
+			if (promotions.length > 0) {
+				dataLayer.push({
+					event: "promoView",
+					ecommerce: {
+						promoView: {
+							promotions: promotions
+						}
+					},
+				});
+			}
+		},
+
+		listenForAddToCart: function(product)
+		{
+			$(document).on('EEAddToCart', function(event, eventData) {
+				var quantity = ''
+				if (eventData.quantity) {
+					quantity = eventData.quantity + '';
+				}
+
+				const params = {
+					quantity: quantity,
+					fulfillment: eventData.fulfillment,
+					wisdomAddToDeliveryFlow: eventData.wisdomAddToDeliveryFlow
+				}
+				dataLayer.push(ACC.eea.createAddToCartEvent(product, "0", params));
+			});
+		},
+
+		listenForUpdateCheckoutStartEventObject: function() {
+			$(document).on('EEUpdateCheckoutStartEventObject', function(event, eeaCheckoutStartEventObject) {
+				ACC.eea.eeaCheckoutStartEventObject = eeaCheckoutStartEventObject;
+			});
+		},
+
+        listenProductClick: function(list, product)
+        {
+            $(document).on("click", "#product_item_code_" + product.id + " a", function(event) {
+                ACC.eea.triggerProductClick(list, product);
+            });
+        },
+
+        listenCartUpdate: function(products) {
+            $(document).on('EEUpdateCart', function(event, eventData) {
+                var initialCartQuantity = parseInt(eventData.initialCartQuantity, 10) || 0;
+                var newCartQuantity = parseInt(eventData.newCartQuantity, 10) || 0;
+                var quantity = newCartQuantity - initialCartQuantity;
+
+                var event = {
+                  event: quantity > 0 ? "addToCart" : "removeFromCart",
+                  ecommerce: {
+                    currencyCode: "GBP"
+                  }
+                };
+                event.ecommerce[quantity > 0 ? "add" : "remove"] = {
+                  products: [
+                    $.extend(
+                      {
+                        quantity: Math.abs(quantity).toString(),
+                        fulfillment: eventData.fulfillment
+                      },
+                      products[eventData.cartEntryNumber]
+                    )
+                  ]
+                };
+
+                dataLayer.push(event);
+            });
+        },
+
+        listenDeliveryModeUpdate: function() {
+            $(document).on("EEUpdateDeliveryMode", (_, eventData) => {
+                const { cartEntry, fulfilmentData } = eventData;
+                const product = cartEntry.product;
+
+                const productData = {
+                    "product_name": product.name,
+                    "product_code": product.code,
+                    "product_price": product.price.value.toString(),
+                    "product_category": (product.categories || []).map(c => c.name).join(","),
+                    "product_quantity": cartEntry.quantity.toString(),
+                    "product_quantity_new": cartEntry.quantity,
+                    "product_fulfillment": fulfilmentData.fulfillmentType
+                };
+
+                if (fulfilmentData.storeId && fulfilmentData.storeName) {
+                    productData["store_ID"] = fulfilmentData.storeId;
+                    productData["store_name"] = fulfilmentData.storeName;
+                }
+
+                handleUpdateBasketEvent("updateCart", productData, product.price.currencyIso);
+            })
+        },
+
+        listenMiniCartProductClick: function() {
+            $(document).on("click", "li.cart_modal_popup div.prod_image a, li.cart_modal_popup div.prod_info a", function(event, eventData) {
+                 var dataHolder = $(this).closest("li.cart_modal_popup");
+                 var product = {
+                    name: "" + dataHolder.data("name"),
+                    id: "" + dataHolder.data("id"),
+                    price: "" + dataHolder.data("price") || "not classified",
+                    brand: "" + dataHolder.data("brand") || "not classified",
+                    category: "" + dataHolder.data("category") || "not classified",
+                    variant: "not classified",
+                    position: "" + dataHolder.data("position") || "0"
+                };
+
+                ACC.eea.triggerProductClick("Mini Cart", product);
+
+            });
+        },
+
+        listenMiniCartPopupProductClick: function() {
+            $(document).on("click", "div.popover-mini-basket div.card__inner a.card__img-wrap, div.popover-mini-basket div.card__inner a.product-card__title", function() {
+                var dataHolder = $(this).closest("div.card__inner");
+                var product = {
+                   name: "" + dataHolder.data("name"),
+                   id: "" + dataHolder.data("id"),
+                   price: "" + dataHolder.data("price") || "not classified",
+                   brand: "" + dataHolder.data("brand") || "not classified",
+                   category: "" + dataHolder.data("category") || "not classified",
+                   variant: "not classified",
+                   position: "" + dataHolder.data("position") || "0"
+                };
+
+                ACC.eea.triggerProductClick("Mini Cart", product);
+            });
+        },
+
+        listenCheckoutStart: function(checkoutButtonSelector, pushConditionFunction) {
+			$(document).on("click", checkoutButtonSelector, function(event) {
+				if (!pushConditionFunction || pushConditionFunction()) {
+					dataLayer.push(ACC.eea.eeaCheckoutStartEventObject);
+				}
+			});
+        },
+
+		getOrderType: function(internalOrderType) {
+			switch(internalOrderType) {
+				case "DELIVERY":
+					return "Delivery";
+				case "CC":
+					return "C&C";
+				case "MIXED":
+					return "Mixed Order";
+			}
+			return "not specified";
+        },
+
+        getUserType: function() {
+			if (true) {
+				return "New";
+			}
+			return "Existing";
+        },
+
+        eeaCheckoutStartEventObject: {},
+
+		listenAddForDeliveryError: function () {
+			$(document).on("EEAddForDeliveryError", (event, eventData) => {
+				dataLayer.push({
+					event: "addForDeliveryError",
+					eventCategory: "PDP",
+					eventAction: "Add for delivery error",
+					eventLabel: eventData.errorDescription
+				});
+			})
+		}
+	};
+
+	
+
+
+
+	
+
+
+
+	
+
+
+
+
+			var pdpProduct = {
+					name: "Adjustable Drop Forged Steel 3 Piece Wrench Set",
+					id: "149054",
+					price: "11",
+					brand: "Wickes",
+					variant: "not classified",
+					category: "Tools & Workwear\/Hand Tools\/Spanners, Sockets & Wrenches",
+				};
+
+			var pdpImpressionEvent = {
+					ecommerce: {
+						detail: {
+							actionField: {
+							},
+						products: [
+							$.extend({}, pdpProduct)
+						]
+					}
+				}
+			};
+
+			ACC.eea.listenForAddToCart(pdpProduct);
+			ACC.eea.listenForUpdateCheckoutStartEventObject();
+			ACC.eea.listenAddForDeliveryError();
+
+			dataLayer.push(pdpImpressionEvent);
+
+			
+
+
+
+
+
+
+var eeaCheckoutProducts = [];
+
+
+
+	
+		
+			
+		
+		
+	
+
+	
+
+
+
+	
+		
+		
+			
+		
+	
+
+	
+
+
+
+ACC.eea.eeaCheckoutStartEventObject = {
+		event: "checkout",
+		orderType: ACC.eea.getOrderType(""),
+		ecommerce: {
+			checkout: {
+				actionField: {
+					step: 1
+				},
+				products: eeaCheckoutProducts
+			}
+		},
+	};
+
+ACC.eea.listenCheckoutStart("#addToCartPopupCheckoutButton"  );
+
+	
+
+
+
+
+
+	
+
+ACC.eea.listenMiniCartPopupProductClick();
+
+
+
+
+
+
+
+var eeaCheckoutProducts = [];
+
+
+
+	
+		
+			
+		
+		
+	
+
+	
+
+
+
+	
+		
+		
+			
+		
+	
+
+	
+
+
+
+ACC.eea.eeaCheckoutStartEventObject = {
+		event: "checkout",
+		orderType: ACC.eea.getOrderType(""),
+		ecommerce: {
+			checkout: {
+				actionField: {
+					step: 1
+				},
+				products: eeaCheckoutProducts
+			}
+		},
+	};
+
+ACC.eea.listenCheckoutStart("#cartPopupCheckoutButton" , function(){return ACC.eea.eeaCheckoutStartEventObject && ACC.eea.eeaCheckoutStartEventObject.orderType !== 'not specified'});
+
+	
+
+
+
+	
+
+
+
+	
+
+
+
+
+    
+
+
+
+
+    
+
+
+
+
+
+    
+
+
+
+
+
+</script>
+
+
+<!-- End Enhanced Ecommerce Analytics -->
+<!-- Google Tag Manager -->
+<script>
+    (function (w, d, s, l, i) {
+        w[l] = w[l] || [];
+        w[l].push({
+            'gtm.start': new Date().getTime(),
+            event: 'gtm.js'
+        });
+        var f = d.getElementsByTagName(s)[0],
+            j = d.createElement(s),
+            dl = l != 'dataLayer' ? '&l=' + l : '';
+        j.async = true;
+        j.src = 'https://www.googletagmanager.com/gtm.js?id=' + i + dl;
+        f.parentNode.insertBefore(j, f);
+    })(window, document, 'script', 'dataLayer', 'GTM-M3LZ2SC');
+</script>
+<!-- End Google Tag Manager -->
+<script async src="https://www.googleoptimize.com/optimize.js?id=GTM-WLDHXNF"></script>
+<title>
+			Adjustable Drop Forged Steel 3 Piece Wrench Set | Wickes.co.uk</title>
+
+		<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+
+		<meta name="google-site-verification" content="8pAmfu-kNqTE4RO5IV_cNFgFAjtppzoZszIuo0GjJgY" />
+			<meta name="p:domain_verify" content="701ce30644ef9e03ddfe346cbb4d15ce" />
+			<meta name="description" content="Adjustable Drop Forged Steel 3 Piece Wrench Set" />
+			<meta name="robots" content="index,follow" />
+			<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+		
+
+
+	<meta http-equiv="x-dns-prefetch-control" content="on"/>
+	
+		<link rel="dns-prefetch" href="//media.wickes.co.uk" />
+	
+		<link rel="dns-prefetch" href="//prod1-wx-prod03-aws-travisperkins-cloud-public.s3.amazonaws.com" />
+	
+		<link rel="dns-prefetch" href="//static.queue-it.net" />
+	
+		<link rel="dns-prefetch" href="//www.google-analytics.com" />
+	
+		<link rel="dns-prefetch" href="//ajax.googleapis.com" />
+	
+
+<link rel="shortcut icon" href="/_ui/addons/b2caddon/responsive/common/img/favicon.ico?v=230130040238" type="image/x-icon"/>
+
+		<link rel="apple-touch-icon" sizes="57x57" href="/_ui/addons/b2caddon/shared/common/images/apple-touch-icon-57x57.png?v=230130040238">
+<link rel="apple-touch-icon" sizes="76x76" href="/_ui/addons/b2caddon/shared/common/images/apple-touch-icon-76x76.png?v=230130040238">
+<link rel="apple-touch-icon" sizes="120x120" href="/_ui/addons/b2caddon/shared/common/images/apple-touch-icon-120x120.png?v=230130040238">
+<link rel="apple-touch-icon" sizes="152x152" href="/_ui/addons/b2caddon/shared/common/images/apple-touch-icon-152x152.png?v=230130040238">
+<link rel="apple-touch-icon" sizes="167x167" href="/_ui/addons/b2caddon/shared/common/images/apple-touch-icon-167x167.png?v=230130040238">
+<link rel="apple-touch-icon" sizes="180x180" href="/_ui/addons/b2caddon/shared/common/images/apple-touch-icon-180x180.png?v=230130040238">
+<link rel="canonical" href="https://www.wickes.co.uk/Adjustable-Drop-Forged-Steel-3-Piece-Wrench-Set/p/149054" />
+			<link type="text/css" media="all" href="/_ui/addons/b2caddon/responsive/common/css/colorbox.css?v=230130040238" rel="preload" as="style" onload="this.rel='stylesheet'"/>
+
+<meta name="theme-color" content="#3e3e3e">
+
+<link rel="stylesheet" type="text/css" href="https://static-content.wickes.co.uk/wickes-css@2.65.2/build/css/pdp-main.css"/>
+	<link rel="preconnect" href="https://fonts.gstatic.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+
+<link type="text/css" media="all" href="/_ui/addons/bloomreachsearchaddon/responsive/common/css/bloomreachsearchaddon.css?v=230130040238" rel="preload" as="style" onload="this.rel='stylesheet'" />
+<link type="text/css" rel="stylesheet" href="https://static-content.wickes.co.uk/wickes-css@2.65.2/build/css/pages/page_product-details.css" />
+        <link type="text/css" rel="stylesheet" href="https://static-content.wickes.co.uk/wickes-css@2.65.2/build/css/pages/page_product-details-v2.css">
+        <link type="text/css" rel="stylesheet" href="https://static-content.wickes.co.uk/wickes-css@2.65.2/build/css/components/price-block-v2.css">
+
+		<style type="text/css">
+			a.pr-rd-to-top { display: none; }
+		</style><script type="text/javascript">
+		/*<![CDATA[*/
+		
+		var ACC = window.ACC || {};
+			ACC.config = {};
+			ACC.config.contextPath = "";
+			ACC.config.encodedContextPath = "";
+			ACC.config.commonResourcePath = "/_ui/responsive/common";
+			ACC.config.themeResourcePath = "/_ui/responsive/theme-wickes";
+			ACC.config.siteResourcePath = "/_ui/responsive/site-wickes";
+			ACC.config.rootPath = "/_ui/responsive";
+			ACC.pwdStrengthVeryWeak = 'Very weak';
+			ACC.pwdStrengthWeak = 'Weak';
+			ACC.pwdStrengthMedium = 'Medium';
+			ACC.pwdStrengthStrong = 'Strong';
+			ACC.pwdStrengthVeryStrong = 'Very strong';
+			ACC.pwdStrengthUnsafePwd = 'password.strength.unsafepwd';
+			ACC.pwdStrengthTooShortPwd = 'Too short';
+			ACC.pwdStrengthMinCharText = 'Minimum length is %d characters';
+			ACC.accessibilityLoading = 'Loading... Please wait...';
+			ACC.accessibilityStoresLoaded = 'Stores loaded';
+			
+			
+			ACC.autocompleteUrl = '/search/autocompleteSecure';
+			ACC.suggestProductsUrl = '/search/suggestProductsSecure';
+			
+			ACC.maxSuggestionsWithProducts = 5;
+			ACC.startSuggestProducts = 3;
+			ACC.defaultCarouselTimeout = 5000;
+			
+			
+		/*]]>*/
+	</script>
+<meta name="format-detection" content="telephone=no" />
+
+		<script type="text/javascript">
+			
+ACC = window.ACC || {};
+
+ACC.scripts = {
+    deferred: new Map,
+    loaded: 0,
+    addAllDeferred: function() {
+        ACC.scripts.deferred.forEach(function(script) {
+            document.body.appendChild(script);
+        });
+    },
+    addDeferred: function(scriptConfig) {
+        var script = document.createElement('script');
+        script.src = scriptConfig.src + scriptConfig.version;
+        script.async = scriptConfig.async;
+        script.type = scriptConfig.type;
+        var fileName = scriptConfig.src.substring(scriptConfig.src.lastIndexOf('/') + 1);
+        script.fileName = fileName;
+        script.onload = function() {
+            ACC.scripts.loaded++;
+            var event = jQuery.Event(fileName + "_loaded");
+            $(window).trigger(event);
+            if(scriptConfig.onload) {
+                var onloadCallback = scriptConfig.onload;
+                if(onloadCallback && (typeof onloadCallback === 'function')) {
+                    onloadCallback();
+                }
+            }
+        };
+        ACC.scripts.deferred.set(scriptConfig.src, script);
+    }
+};
+
+$(window).on('load', ACC.scripts.addAllDeferred);
+</script>
+
+		<script type="text/javascript">
+				var Wick = Wick || {};
+Wick.productGallery = {
+    convertToArrayOfIdentifiers: function(hybrisString) {
+        return hybrisString.trim().slice(1, hybrisString.length-1).split(',').map(function (s) {
+            return s.trim();
+        });
+    },
+
+    transformationSaver: function(imageArray) {
+        return imageArray
+            .filter(i => !!i)
+            .map(function(uri) {
+                return {
+                    publicId: uri,
+                    transformation: {
+                        "background": "#FFFFFF",
+                        "dpr": 1,
+                        "fetch_format": "jpg",
+                        "quality": "auto:good"
+                    }
+                };
+            });
+        },
+
+    createWidget: function(cloudinary, productIdentifiers, selector) {
+        const myWidget = cloudinary.galleryWidget({
+                "container": selector,
+                "cloudName": "dj6kabpgi",
+                "secure": true,
+                "privateCdn": true,
+                "secureDistribution": "media.wickes.co.uk",
+                "mediaAssets": Wick.productGallery.transformationSaver(
+                    Wick.productGallery.convertToArrayOfIdentifiers(productIdentifiers)
+                ),
+                "imageBreakpoint": 250,
+                "zoomProps": {
+                    "level": 3,
+                    "trigger": "click"
+                },
+                "loaderProps": {
+                    "style": "circle"
+                },
+                "preload": [],
+                "placeholderImage": false,
+                "carouselLocation": "bottom",
+                "carouselOffset": 10,
+                "thumbnailProps": {
+                    "navigationShape": "radius",
+                    "navigationColor": "#FFFFFF",
+                    "navigationIconColor": "#000000",
+                    "selectedBorderPosition": "top"
+                },
+                "videoProps": {
+                    "controls": "all",
+                    "sound": true
+                }
+        });
+        myWidget.render();
+    },
+
+    initCloudinary: function(cloudinary, productIdentifiers) {
+        const selector = ".pdp__gallery";
+
+        const observer = new MutationObserver(mutations => {
+            if (document.querySelector(selector)) {
+                Wick.productGallery.createWidget(cloudinary, productIdentifiers, selector);
+                observer.disconnect();
+            }
+        });
+
+        const container = document.documentElement || document.body;
+        observer.observe(container, {
+            childList: true,
+            subtree: true
+        });
+    }
+};
+</script>
+			<script async src="https://product-gallery.cloudinary.com/all.js" onload="Wick.productGallery.initCloudinary(cloudinary, '[products/wickes/T3274_149054_00, products/wickes/T3274_149054_01]')"></script>
+		</head>
+
+	<body class="page-responsiveEnhancedProductDetailsPage pageType-ProductPage template-pages-layout-responsiveEnhancedProductDetailsPage  language-en" >
+
+		<script type="text/javascript">
+		var br_iuid = 'aHR0cHM6Ly93d3cud2lja2VzLmNvLnVrL0FkanVzdGFibGUtRHJvcC1Gb3JnZWQtU3RlZWwtMy1QaWVjZS1XcmVuY2gtU2V0L3AvMTQ5MDU0';
+	</script>
+ <script type="text/javascript">
+		var br_related_rid = 'Rmgt5p321rqvcdfj7jt0l-m1,i1,c1,uf';
+	</script>
+ <!-- Google Tag Manager (noscript) -->
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-M3LZ2SC"
+height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<!-- End Google Tag Manager (noscript) -->
+<div class="app-data" style="display: none;">
+	<div class="app-discount-code"></div>
+	<div class="app-customer-type">Online</div>
+	<div class="basket-total-items">0</div>
+</div>
+<script>
+    var ACC = ACC || {};
+    ACC.app = {};
+    ACC.app.isMobileAppBrowser = false;
+    ACC.app.isVatToggleAvailable = false;
+</script>
+<script
+                async
+                src="https://eu-library.klarnaservices.com/lib.js"
+                data-client-id="ddb62582-3156-55f6-9fc8-dc3259aa4617"
+        ></script>
+    <script
+                defer
+                src="/_ui/addons/b2caddon/responsive/common/js/klarna-modal-scroll-disable.js"
+        ></script>
+    <div class="sticky-wrapper waypoint">
+			</div>
+
+		
+
+
+
+
+
+
+<a href="#skip-to-content" class="sr-only" data-role="none">Skip to content</a>
+		<a href="#skip-to-navigation" class="sr-only" data-role="none">Skip to navigation menu</a>
+
+		<div class="header-wrapper">
+    <div class="header-top-wrapp ">
+        <div class="header-top-wrapp__container">
+            <ul class="header-top-line">
+                <li class="header-top-line__item header-top-line_shop-list">
+                    <a href="/login" class='header-top-line__link'>
+                    <span class="btn__text">
+                        <i class="fas fa-user fa-lg"></i>
+                    </span>
+                    <span class="header-top-line__link-title">
+                        Sign-in / Register</span>
+                </a>
+            </li>
+<li class="header-top-line__item header-top-line_shop-list">
+    <a href="/track-my-order" class="header-top-line__link">
+        <span class="btn__text">
+           <i class="fas fa-map-marked-alt fa-lg"></i>
+       </span>
+       <span class="header-top-line__link-title">Track my order</span>
+   </a>
+</li>
+<li class="header-top-line__item header-top-line_shop-list">
+    <a href="/project-list" class="header-top-line__link">
+        <span class="btn__text">
+           <i class="fas fa-clipboard fa-lg "></i>
+           <i class="fas fa-clipboard-list fa-lg d-none"></i>
+       </span>
+       <span class="header-top-line__link-title">Project list</span>
+   </a>
+</li>
+</ul>
+</div>
+</div>
+
+<header class="header">
+    <div class="header-inner">
+        <div class="header-logo">
+            <a href="/" class="header-logo__link ">Wickes</a>
+</div>
+<div class="header-hamburg">
+    <div class="btn btn-primary header-hamburger-menu">
+       <span class="icon">
+         <span class="fas fa-bars fa-2x"></span>
+     </span>
+ </div>
+ <div class="header-logo header-logo--minicart">
+   <a href="/" class="header-logo__link header-logo_wickes">Wickes</a>
+</div>
+</div>
+<div class="header-search__wrapper" id="search-wrapper">
+    <div class="header-search__overlay"></div>
+    <form class="header-search" name="search_form" method="get" action="/search">
+    <input hidden id="products_suggestions_header" value="Products">
+    <div class="autocomplete">
+        <input id="search" aria-label="search" type="text" name="text" class="header-search__input"
+        maxlength="100" placeholder="Search for your product">
+    </div>
+    <button class="header-search__submit" aria-label="search submit" type="submit">
+        <span class="header-search__submit-icon">
+           <i class="fas fa-search fa-2x"></i>
+       </span>
+       <span class="header-search__submit-icon header-search__submit-icon--mobile">
+          <i class="fas fa-search fa-2x"></i>
+      </span>
+  </button>
+</form>
+</div>
+<div class="header-right-wrapp">
+    <ul class="header-right">
+        <li class="header-right__item">
+            <a href="/ideas-advice" class="header-right__link">
+              <span class="btn__text">
+                 <i class="fas fa-lightbulb fa-2x"></i>
+             </span>
+             <span class="header-right__link-title">Ideas & Advice</span>
+         </a>
+     </li>
+     <li class="header-right__item">
+        <a href="/store-finder" class="header-right__link">
+          <span class="btn__text">
+             <i class="fas fa-map-marker-alt fa-2x"></i>
+         </span>
+         <span class="header-right__link-title">Store Locator</span>
+     </a>
+ </li>
+ <li class="header-right__item">
+    <script type="text/javascript">
+	var rolloverPopupUrl = '/cart/rollover/ResponsiveMiniCart';
+	var refreshMiniCartUrl = '/cart/enhancedMiniCart/SUBTOTAL/?';
+</script>
+
+<div class="header-minicart">
+    <div class="header-minicart__switcher">
+							<span class="header-right__link header-minicart__btn header-minicart__btn_switcher">
+               <span class="btn__text">
+                 <i class="fas fa-shopping-basket fa-2x"></i>
+               </span>
+               <span class="header-right__link-title">
+               	Basket</span>
+ 							</span>
+        <a href="/cart" class="header-right__link header-minicart__btn header-minicart__btn_link" style="display: none;">
+              <span class="btn__text">
+                <i class="fas fa-shopping-basket fa-2x"></i>
+              </span>
+            <span class="header-right__link-title">
+              	Basket</span>
+        </a>
+    </div>
+    				<span class="header-minicart__counter">0</span>
+</div>
+
+<script type="text/html" id="mini-basket-rollover"></script>
+<script type="text/html" id="mini-basket-popup"></script></li>
+</ul>
+</div>
+<div class="header-mobileicon">
+    <div class="btn btn-primary header-shop-list search-switcher" id="search-button">
+        <span class="icon">
+            <span class="fas fa-search fa-lg"></span>
+        </span>
+    </div>
+    <a href="/login">
+    <div class="btn btn-primary header-shop-list">
+            <span class="icon">
+                <span class="fas fa-user fa-lg"></span>
+            </span>
+        </div>
+    </a>
+    <a href="/store-finder">
+        <div class="btn btn-primary header-shop-list">
+            <span class="icon">
+                <span class="fas fa-map-marker-alt fa-lg"></span>
+            </span>
+        </div>
+    </a>
+</div>
+<div class="header-minicart-wrap">
+    <script type="text/javascript">
+	var rolloverPopupUrl = '/cart/rollover/ResponsiveMiniCart';
+	var refreshMiniCartUrl = '/cart/enhancedMiniCart/SUBTOTAL/?';
+</script>
+
+<div class="header-minicart">
+    <div class="header-minicart__switcher">
+							<span class="header-right__link header-minicart__btn header-minicart__btn_switcher">
+               <span class="btn__text">
+                 <i class="fas fa-shopping-basket fa-2x"></i>
+               </span>
+               <span class="header-right__link-title">
+               	Basket</span>
+ 							</span>
+        <a href="/cart" class="header-right__link header-minicart__btn header-minicart__btn_link" style="display: none;">
+              <span class="btn__text">
+                <i class="fas fa-shopping-basket fa-2x"></i>
+              </span>
+            <span class="header-right__link-title">
+              	Basket</span>
+        </a>
+    </div>
+    				<span class="header-minicart__counter">0</span>
+</div>
+
+<script type="text/html" id="mini-basket-rollover"></script>
+<script type="text/html" id="mini-basket-popup"></script></div>
+</div>
+
+    <span class="btn btn-primary back-to-top" id="back-to-top" style="display: none;">
+        <span class="icon">
+            <span class="sr-only">back to top</span>
+            <span class="fas fa-arrow-to-top"></span>
+        </span>
+    </span>
+</header>
+</div>
+
+<script type="text/html" id="search-button"></script>
+<script type="text/html" id="search-wrapper"></script>
+<script type="text/html" id="search"></script><a id="skip-to-navigation"></a>
+
+
+
+
+
+
+<nav class="main-nav" id="main-nav">
+	<div class="ssc ssc-wrapper ssc-nav">
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+    <div class="ssc-line"></div>
+</div>
+
+	
+
+
+
+
+
+
+<div class="main-nav__button" data-logged-in="false">
+  <a href="/login" class="nav-button" tabindex="0">
+  <span class="nav-button__icon">
+              <i class="fas fa-user"></i>
+  </span>
+  <span class="nav-button__text">
+   Log In / Register
+ </span>
+</a>
+</div>
+
+
+<div class="main-nav__button">
+  <a href="/track-my-order" class="nav-button">
+    <span class="nav-button__icon">
+      <i class="fas fa-map-marked-alt"></i>
+    </span>
+    <span class="nav-button__text">Track Order</span>
+  </a>
+</div>
+<div class="main-nav__button">
+  <a href="/ideas-advice" class="nav-button">
+    <span class="nav-button__icon">
+      <i class="fas fa-lightbulb"></i>
+    </span>
+    <span class="nav-button__text">Ideas & Advice</span>
+  </a>
+</div>
+
+<div class="main-nav__button">
+  <a href="/project-list" class="nav-button">
+    <span class="nav-button__icon">
+      <i class="fas fa-clipboard "></i>
+      <i class="fas fa-clipboard-list d-none"></i>
+    </span>
+    <span class="nav-button__text">Project List</span>
+  </a>
+</div>
+
+
+</nav>
+<div class="main-nav__overlay"></div>
+<div class="breadcrumbs">
+			
+
+
+
+
+
+
+<script type="application/ld+json">
+{
+	"@context":"http://schema.org",
+	"@type":"BreadcrumbList",
+	"itemListElement":[
+	{
+		"@type":"ListItem",
+		"position":1,
+		"item":{
+			"@id":"/",
+			"name":"Home"
+         }
+	},
+	
+		{
+			"@type":"ListItem",
+			"position":2,
+			"item":{
+				"@id":"/Products/c/1000000",
+				"name":"Products"
+			}
+		} ,
+
+		{
+			"@type":"ListItem",
+			"position":3,
+			"item":{
+				"@id":"/Products/Tools+Workwear/c/1000361",
+				"name":"Tools & Workwear"
+			}
+		} ,
+
+		{
+			"@type":"ListItem",
+			"position":4,
+			"item":{
+				"@id":"/Products/Tools+Workwear/Hand-Tools/c/1000366",
+				"name":"Hand Tools"
+			}
+		} ,
+
+		{
+			"@type":"ListItem",
+			"position":5,
+			"item":{
+				"@id":"/Products/Tools+Workwear/Hand-Tools/Spanners%2C-Sockets+Wrenches/c/1002008",
+				"name":"Spanners, Sockets & Wrenches"
+			}
+		} ,
+
+		{
+			"@type":"ListItem",
+			"position":6,
+			"item":{
+				"@id":"/Adjustable-Drop-Forged-Steel-3-Piece-Wrench-Set/p/149054",
+				"name":"Adjustable Drop Forged Steel 3 Piece Wrench Set"
+			}
+		} 
+
+	]
+}
+</script>
+<ul class="breadcrumbs__container">
+	<li class="breadcrumbs__item">
+		<a href="/" class="breadcrumbs__link">
+			<span>Home</span>
+		</a>
+		<span class="breadcrumbs__icon icon">
+			<i class="ic-arrow-right-small"><i class="far fa-angle-right"></i></i>
+		</span>
+	</li>
+
+	<li class="breadcrumbs__item">
+			<a href="/Products/c/1000000" class="breadcrumbs__link">
+						<span>Products</span>
+					</a>
+				<span class="breadcrumbs__icon icon">
+				<i class="ic-arrow-right-small"><i class="far fa-angle-right"></i></i>
+			</span>
+		</li>
+	<li class="breadcrumbs__item">
+			<a href="/Products/Tools+Workwear/c/1000361" class="breadcrumbs__link">
+						<span>Tools & Workwear</span>
+					</a>
+				<span class="breadcrumbs__icon icon">
+				<i class="ic-arrow-right-small"><i class="far fa-angle-right"></i></i>
+			</span>
+		</li>
+	<li class="breadcrumbs__item">
+			<a href="/Products/Tools+Workwear/Hand-Tools/c/1000366" class="breadcrumbs__link">
+						<span>Hand Tools</span>
+					</a>
+				<span class="breadcrumbs__icon icon">
+				<i class="ic-arrow-right-small"><i class="far fa-angle-right"></i></i>
+			</span>
+		</li>
+	<li class="breadcrumbs__item">
+			<a href="/Products/Tools+Workwear/Hand-Tools/Spanners%2C-Sockets+Wrenches/c/1002008" class="breadcrumbs__link">
+						<span>Spanners, Sockets & Wrenches</span>
+					</a>
+				<span class="breadcrumbs__icon icon">
+				<i class="ic-arrow-right-small"><i class="far fa-angle-right"></i></i>
+			</span>
+		</li>
+	<li class="breadcrumbs__item">
+			<span>Adjustable Drop Forged Steel 3 Piece Wrench Set</span>
+				<span class="breadcrumbs__icon icon">
+				<i class="ic-arrow-right-small"><i class="far fa-angle-right"></i></i>
+			</span>
+		</li>
+	</ul></div><a id="skip-to-content"></a>
+
+		<main class="pdp__main">
+			<div class="globalMessages">
+	</div>
+<div class="container">
+			<div class="pdp">
+				<div class="pdp__title">
+					<h1 class="pdp__heading">Adjustable Drop Forged Steel 3 Piece Wrench Set</h1>
+					<div class="pdp__reviews_small">
+						<span class="product-code product-code-v2">
+							Product code:&nbsp;<strong id="product-code-val">149054</strong>
+						</span>
+						<div class="product-card__reviews review-star" id="pr-reviewsnippet">
+						        <div class="ssc skeleton is-loading" data-pr-placeholder>
+						            <div class="ssc-line"></div>
+						            <div class="ssc-line"></div>
+						        </div>
+						    </div>
+						</div>
+				</div>
+				<div class="pdp__gallery">
+					<div class="gallery-pdp">
+						<script type="text/javascript">
+    ACC = window.ACC || {};
+ACC.scene7viewer = ACC.scene7viewer || {};
+
+ACC.scene7viewer.functions = {
+    initZoomViewer: function() {
+        var container_id = "s7viewer";
+        var zoomViewer = new s7viewers.ZoomViewer({
+            containerId: container_id,
+            params: ACC.scene7viewer.params
+        });
+        ACC.scene7viewer.functions.addPromoBanner(zoomViewer, container_id);
+        zoomViewer.setParam("style", ACC.scene7viewer.style);
+        zoomViewer.setParam("contentURL", "/");
+        zoomViewer.init();
+    },
+    initFlyoutViewer: function() {
+        var flyoutViewer = new s7viewers.FlyoutViewer({
+            containerId: "s7flyout_div",
+            params: ACC.scene7viewer.params
+        });
+        ACC.scene7viewer.functions.addPromoBanner(flyoutViewer, "s7flyout_div_flyout");
+        flyoutViewer.init();
+    },
+    addPromoBanner: function(viewer, container_id) {
+        if (ACC.scene7viewer.promotionImageUrl !== undefined) {
+            viewer.setHandlers({ "initComplete": function() {
+                ACC.scene7viewer.functions.addImageOverlay(ACC.scene7viewer.promotionImageUrl, container_id);
+            }});
+        }
+    },
+    addImageOverlay: function(url, container_id) {
+        var container = document.getElementById(container_id);
+        var overlay = document.createElement("img");
+        overlay.src = url;
+        overlay.id = "image_promotion_overlay";
+        container.appendChild(overlay);
+    },
+    hideFullscreenButtonForIOS: function() {
+        var iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+        if (iOS) {
+            $('head').append('<style type="text/css">[data-namespace="s7classic"].s7fullscreenbutton{ display: none !important; }</style>');
+        }
+    }
+};</script>
+
+<!--style type="text/css">
+#s7flyout_div.s7flyoutviewer{
+	width:100%;
+	height: 402px;
+}
+
+#s7flyout_div.s7flyoutviewer .s7flyoutzoomview .s7flyoutzoom {
+	left: 350px;
+	top: -10px;
+	width: 550px;
+	height: 400px;
+	z-index: 100;
+}
+
+#s7flyout_div.s7flyoutviewer .s7swatches {
+	height: 100px;
+	background-color: white;
+}
+
+#s7flyout_div.s7flyoutviewer .s7flyoutzoomview {
+	border: none;
+}
+
+#image_promotion_overlay {
+	position: absolute;
+	right: 10px;
+	bottom: 10px;
+}</style-->
+
+<!-- responsive:deferredScript async="true" type="text/javascript" onload="ACC.scene7viewer.functions.initFlyoutViewer"
+src="https://s7g10.scene7.com/s7viewers/html5/js/FlyoutViewer.js"/ -->
+
+<div id="s7flyout_div">
+	<noscript>
+			<div id="noScriptProductS7Image">
+				<img loading="lazy" src="//media.wickes.co.uk/is/image/wickes/T3274_149054_00?$largeNormal$&defaultImage=wickes/2018-Wickes-Missing-Product-650x650" />
+			</div>
+		</noscript>
+	</div>
+</div>
+				</div>
+				<div class="pdp__aside">
+					<input type="hidden" name="productType" value="MasterProductModel"/>
+
+<div class="pdp-price-container">
+	<div class="pdp-price">
+		<div class="pdp-price__value">
+    <div class="">
+	<div class="main-price">
+	<div class="main-price__value pdp-price__new-price">
+		£11</div>
+
+	</div>
+<div class="product-card__price-sqm product-card__price_empty">&nbsp;</div>
+	</div>
+<div class="klarna-test-badge-remove">
+                <klarna-placement
+                        data-key="credit-promotion-badge"
+                        data-locale="en-GB"
+                        data-purchase-amount="1100">
+                </klarna-placement>
+            </div>
+        </div>
+<div class="pdp-price__oos">
+        <div class="prods-stock-store">
+            <div class="schoutstock">Limited Stock Only</div>
+                </div>
+
+        <div class="outOfStockMessageClass">Sorry, this product has limited stock only</div>
+                    </div>
+<div class="pdp-price__controls">
+	<div class="pdp-price__control-holder">
+		<label for="quantity-field" class="quantity-label">
+			Quantity:</label>
+		<input type="text"
+			   inputmode="numeric"
+			   pattern="[1-9]\d*"
+			   required
+			   value="1"
+			   maxlength="5"
+			   size="4"
+			   id="quantity-field"
+			   class="tbx tbx_quantity"
+			   name="qty"/>
+		</div>
+</div>
+<script type="text/javascript">
+	
+	window.googleMapsApiUrl = "https://maps.googleapis.com/maps/api/js?key=AIzaSyBKEn2_7ecDM0A9FNa2nGr97t4QVROlOnY&amp;v=quarterly";
+</script>
+<script type="text/javascript" src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBKEn2_7ecDM0A9FNa2nGr97t4QVROlOnY&amp;v=quarterly"></script>
+<style>
+	.pdp-price-container .modal-box li::before{content:' ';}
+</style>
+<div class="marker_div"></div>
+<script type="text/javascript">
+    var cncButtonText = 'Click & Collect';
+    var notAvailableCnCText = 'Click & Collect not available';
+    var storeInfoText = 'Store Info';
+    var hideInfoText = 'Hide Info';
+    var showMapText = 'Show Map';
+    var hideMapText = 'Hide Map';
+    var myLocationText = 'My Location';
+    var stockAndCnCFilterText = 'Stores with <span class="stock__descr_both">both</span> <span class="stock__descr_stock">stock</span> <span class="stock__descr_both">and</span> <span class="stock__descr_c-and-c">Click & Collect</span> near&nbsp;';
+    var stockFilterText = 'Stores with <span class="stock__descr_stock">stock</span> near&nbsp;';
+    var cncFilterText = 'Stores with <span class="stock__descr_c-and-c">Click & Collect</span> near&nbsp;';
+    var noFilterText = 'No filters applied &nbsp;';
+	var tilesWarningMessageText = 'Sorry, delivery option is not available for this product, to proceed with your order please use Click&Collect.';
+	var storeUnavailableMessage = "We’re sorry Click & Collect is temporarily unavailable at this store. Please choose another store.";
+	var cncRestrictedStoreMessage = "We're sorry-this item is currently unavailable for click and collect";
+	var updateDefaultStoreText = "Update Default Store";
+</script>
+<div class="bw">
+    <div id="bwSuccessMsg" class="chosen__notif">
+        <div class="notification notification_success" style="display: block">
+            <span class="icon notification__icon">
+               <span class="fas fa-check-circle"></span>
+            </span>
+            Product added for Click &amp; Collect</div>
+    </div>
+    <div id="bwErrorMsg" class="chosen__notif">
+        <div class="notification notification_error" style="display: block">
+            <span class="icon notification__icon">
+               <span class="fas fa-check-circle"></span>
+            </span>
+            Product has not been added for Click &amp; Collect</div>
+    </div>
+   <div class="bw__chosen chosen chosen_hide">
+      <div class="chosen__item store">
+               <div class="store__info">
+           <div class="store__name">
+              <span class="store__name-text"></span>
+           </div>
+           <div class="store__stock">
+           </div>
+        </div>
+        <div class="store__details">
+           <div class="store__dist">
+              <span class="store__dist_val"></span>
+              <span class="store__dist_uom">mi</span>
+           </div>
+           <div class="store__more">
+              <a href="#" class="store__more_link">
+                Store Info</a>
+           </div>
+        </div>
+    </div>
+        <p class="stock__valid stock__valid_show">
+            </p>
+
+       <form class="" action="/store-pickup/cart/add" method="post" style="width: auto">
+            <input type="hidden" id="bigWinsStoreNamePost" name="storeNamePost" value="" />
+            <input type="hidden" name="productCodePost" value="149054" />
+            <input type="hidden" id="pickupQty" name="hiddenPickupQty" value="1" class="hiddenBigWinsPickupQty" />
+            <button type="button" class=" btn btn-action btn_full bw__cc-btn bw__nearest-store-cc-btn" id="product_149054"
+                  	    	        data-productcart-wasprice=''
+                  	    	        data-productcart='<div class="product-card__price-value">£11</div>
+'
+                  	    	        data-productname='Adjustable Drop Forged Steel 3 Piece Wrench Set'
+                  	    	        data-cartpage="false"
+                  	    	        data-entryNumber="0"
+                  	    	        data-actionurl="/store-pickup/cart/add"
+                                    data-value="1"
+                                    disabled>
+                <span class="btn__text">Click & Collect not available</span>
+                    </button>
+      </form>
+      <div class=" reserve">
+         <div class="reserve_ic">
+            <i class="far fa-hourglass-half"></i>
+         </div>
+         <div class="reserve_msg">
+            Our stock moves fast! <span class="reserve_bold">Secure your product now with Click &amp; Collect.</span></div>
+      </div>
+   </div>
+   <div class="bw__stock stock">
+      <div class="stock__accordion non-reg collapsed" data-toggle="collapse" data-target="#stock-accordion" aria-expanded="false">
+        <div class="stock__head non-reg">
+            <span class="non-reg__text">
+                Stock Check</span>
+         </div>
+      </div>
+      <div class="stock__head">
+          <div class="stock__close">
+              <i class="far fa-times"></i>
+          </div>
+      </div>
+      <div class="stock__info collapse " id="stock-accordion" style="">
+         <div class="stock__tabs ">
+            <div class="stock__tab active" data-stores="nearest">
+               Nearest Store</div>
+            <div class="stock__tab" data-stores="more">
+               More Stores</div>
+         </div>
+         <div class="stock__content">
+            <div class="stock__find">
+               <div class="stock__params">
+                  <div class="stock__quant">
+                     <label for="quantity-field" class="quantity-label">Quantity:<input type="text" inputmode="numeric" required pattern="[1-9]\d*" maxlength="5" size="4" id="stock-quantity" class="tbx tbx_quantity" value="1">
+                     </label>
+                  </div>
+                  <span class="stock__price">
+                    <span class="stock__price-val">£11</span>
+                  </span>
+               </div>
+               <form id="storePickupForm" action="/store-pickup/149054/pointOfServices" class="stock__postcode" method="post" onkeypress="return event.keyCode != 13;">
+               <div class="stock__postcode">
+                  <label class="stock__postcode_label">
+                     <input type="text" class="stock__input tbx" name="bw-postcode" id="bw-postcode" value="">
+                     <button class="btn btn-secondary stock__target" id="geoLocationIcon">
+                        <span class="btn__text">
+                           <i class="far fa-crosshairs"></i>
+                        </span>
+                     </button>
+                  </label>
+                  <span class="stock__postcode_invalid-msg">
+                      Check that you entered a valid postcode or place name.</span>
+               </div>
+               <div class="stock__quest">
+                  <label for="stock-only" class="chb">
+                     <input type="checkbox" value="" id="stock-only" name="stock-only" class="stock__quest_check" />
+                       <ins><i class="fas fa-check"></i></ins>
+                     <span>Only show stores with stock.</span>
+                  </label>
+                  <label for="cc-only" class="chb">
+                     <input type="checkbox" value="" id="cc-only" name="cc-only" class="stock__quest_check" />
+                        <ins><i class="fas fa-check"></i></ins>
+                     <span>Only show stores with Click &amp; Collect.</span>
+                  </label>
+                  <span class="icon icon-info-component " data-toggle="tooltip" data-placement="left" title="" data-original-title="We offer a queueing system for click &amp; collect when stores are busy.">
+                     <span class="fas fa-info-circle"></span>
+                     <span class="far fa-info-circle"></span>
+                  </span>
+               </div>
+               <button class="btn btn-primary btn_full stock__find_btn" id="bw_pickupstore_search_button">
+                   <span class="btn__text">Find Stores</span>
+               </button>
+               <div class="stock__cancel">
+                  <a href="#" class="stock__cancel-text">
+                  Cancel
+                  </a>
+               </div>
+               <input type="hidden" name="cartPage" id="atCartPageBW" value="false" />
+               <input type="hidden" name="entryNumber" value="0" class="entryNumber" />
+               <input type="hidden" name="nearestStore" id="nearestStore" value="true"/>
+               <input type="hidden" name="productPage" id="atProductPageBW" value="true" />
+               </form>
+            </div>
+
+            <div class="stock__result stock__result_hide">
+                <div class="stock__search">
+                   <div class="stock__res">
+                      <div class="stock__arg">
+                         <div class="stock__amount">
+                            <span class="stock__amount-title">Quantity:</span>
+                            <span class="stock__amount-val">1</span>
+                         </div>
+                         <div class="stock__cost">
+                            £<span class="stock__cost-val">11</span>
+                         </div>
+                      </div>
+                      <div class="stock__descr">
+                         Stores with <span class="stock__descr_both">both</span> <span class="stock__descr_stock">stock</span> <span class="stock__descr_both">and</span> <span class="stock__descr_c-and-c">Click & Collect</span> near&nbsp;<span class="stock__descr_post"></span>.
+                      </div>
+                   </div>
+                   <div class="stock__edit">
+                      <button class="btn btn-primary stock__edit_btn">
+                         <span class="btn__text">
+                            <i class="far fa-pencil"></i>
+                            Edit Search</span>
+                      </button>
+                   </div>
+                </div>
+                <div class="stock__list">
+   <form class=""
+         action="/store-pickup/cart/add" method="post" style="width: auto">
+       <button class="btn btn-action btn_full bw__cc-btn" disabled="disabled" >
+                   <span class="btn__text">
+                      Click & Collect not available</span>
+                </button>
+           </form>
+   <div class=" reserve">
+      <div class="reserve_ic">
+         <i class="far fa-hourglass-half"></i>
+      </div>
+      <div class="reserve_msg">
+         Our stock moves fast! <span class="reserve_bold">Secure your product now with Click &amp; Collect.</span></div>
+   </div>
+</div></div>
+         </div>
+      </div>
+   </div>
+</div>
+<div class="pdp-price__controls">
+		<form id="addSampleToCartForm149054" class="add_sample_to_cart_form" action="/cart/add/sample" method="post"><input type="hidden" name="productCodePost" value="149054" />
+			<input type="hidden" name="qty" value="1" />
+			<input type="hidden" name="targetProductCode" value="149054" />
+            <div>
+<input type="hidden" name="CSRFToken" value="23fd9bea-a096-4c4e-a528-cb0790d4e69e" />
+</div></form></div>
+</div>
+</div>
+</div>
+
+				<div class="pdp__description">
+					<div class="product-main-info">
+						<div class="product-main-info__description">
+	This 3 piece adjustable wrench set comes in three popular sizes 6", 8" & 10" of adjustable drop forged steel wrenches for light or heavy duty use. They have a smooth jaw opening action and are Chrome plated for anti corrosion.</div>
+<div class="product-main-info__read-more">
+	Read more</div>
+<div class="product-main-info__read-less">
+	Read less</div><div class="product-main-info__view">
+							<a href="#" data-open-accordion="#product-details">
+								View product details</a>
+						</div>
+						<div class="product-main-info__saving-list">
+                        	<div class="shopping_list_block"></div>
+                        	<div class="shop-list-modal">
+	<div class="modal modal-box modal-box_full" id="modal-saving-to-shop-list" tabindex="-1" role="dialog">
+		<div class="modal-dialog modal-box__container" role="document">
+			<div class="modal-box__row justify-content-center">
+				<div class="modal-box__columns">
+					<div class="modal-content modal-box__content">
+						<div class="modal-header modal-box__header">
+							<div class="justify-content-center">
+								<div class="container">
+									<div class="row">
+										<div class="col-12">
+											<div class="d-flex align-items-center modal-title modal-box__title">
+												<i class="title-icon fas fa-clipboard-check"></i>
+												<span class="heading-4">
+													Saved to Project List</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</div>
+							<button class="close modal-box__btn-close d-print-none" type="button" data-dismiss="modal"
+									aria-label="Close">
+								<span class="icon" aria-hidden="true">
+									<span class="far fa-times"></span>
+								</span>
+							</button>
+						</div>
+						<div class="modal-body modal-box__body popup-content">
+							<div class="component container">
+								<div class="row">
+									<div class="col-12">
+										<div class="saving-content">
+											<div class="saving-item-picture">
+												<img loading="lazy" src="//media.wickes.co.uk/is/image/wickes/T3274_149054_00?$largeNormal$&defaultImage=wickes/2018-Wickes-Missing-Product-650x650" alt="img alt" />
+											</div>
+											<div class="saving-name primary-text">
+												<span class="heading-6">Adjustable Drop Forged Steel 3 Piece Wrench Set</span>
+												<span>
+													added to "My Project List".</span>
+											</div>
+											<div class="saved-action-link primary-text">
+												<a href="/project-list" class="link-secondary">
+													Go to My Project List</a>
+												<a href="#" class="link-primary">
+													Continue Shopping</a>
+											</div>
+										</div>
+									</div>
+								</div>
+							</div>
+							<div class="container ">
+	<div class="row">
+		<div class="col-12">
+			<hr>
+		</div>
+	</div>
+</div>
+<div class="container component">
+									<div class="row">
+										<div class="col-12">
+											<div class="primary-text">
+		<div class="notification notification_warning unauthenticated">
+			<span class="icon notification__icon">
+				<span class="fas fa-exclamation-circle">
+				</span>
+			</span>
+			You are not logged in to save your list permanently. Until you log in, your list will be saved temporarily and can only be accessed from the device you are using now.<span class="icon notification__close">
+				<span class="far fa-times"></span>
+			</span>
+		</div>
+	</div>
+<div class="btn-login-account mb-4">
+	<button class="btn btn-primary">
+		<span class="btn__text">
+			Log in</span>
+	</button>
+
+	<button class="btn btn-secondary">
+		<span class="btn__text">
+			Create an account</span>
+	</button>
+</div>
+</div>
+									</div>
+								</div>
+							</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+</div>
+						
+
+<script type="text/javascript" src="/_ui/addons/b2caddon/responsive/common/js/add.to.any.customisation.js?v=230130040238"></script>
+<script type="text/javascript" async src="https://static.addtoany.com/menu/page.js"></script>
+
+<div class="product-main-info__share">
+	<a href="#">
+		<button class="btn btn-primary share-button">
+			<i class="fas fa-share-alt share-icon"></i>
+		</button>
+		<span>Share product</span>
+	</a>
+</div>
+
+<div class="a2a_kit a2a_kit_size_32 a2a_default_style product-main-info__share-buttons share-buttons">
+	<ul class="share-buttons__list">
+		<li class="share-buttons__item">
+			<a class="a2a_button_twitter"></a>
+		</li>
+		<li class="share-buttons__item">
+			<a class="a2a_button_facebook"></a>
+		</li>
+		<li class="share-buttons__item">
+			<a class="a2a_button_pinterest"></a>
+		</li>
+		<li class="share-buttons__item">
+			<a class="a2a_button_whatsapp"></a>
+		</li>
+	</ul>
+</div>
+</div>
+				</div>
+				<div class="pdp__actions actions">
+					</div>
+			</div>
+		</div>
+
+		<div class="container">
+			<div class="pdp__fbt">
+			</div>
+		</div>
+
+		<div class="yCmsContentSlot container">
+</div><div class="container container-info">
+			<div class="pdp">
+	<div class="pdp__info">
+	<div class="info">
+		<div class="accordion additional-info  info__block" >
+				<h5 class="accordion__header additional-info__header info__header">
+					Product details</h5>
+				<div class="accordion__content additional-info__content info__content" >
+					<div class="info-content" id="product-details">
+    <div class="info__lists">
+	<ul class="info__lists-not-bullets">
+	<li>
+				<strong>Adjustable:</strong>
+				Yes</li>
+		<li>
+				<strong>Years Guaranteed:</strong>
+				1</li>
+		<li>
+				<strong>Size:</strong>
+				330 mm</li>
+		<li>
+				<strong>Jaw Capacity:</strong>
+				150mm - 19mm, 200mm - 24mm, 250mm - 27mm (maximum)</li>
+		<li>
+				<strong>Material:</strong>
+				Drop Forged Steel</li>
+		</ul>
+<ul class="info__lists-not-bullets">
+	<li>
+				<strong>End Type:</strong>
+				Adjustable</li>
+		<li>
+				<strong>Ratchet:</strong>
+				No</li>
+		<li>
+				<strong>Length:</strong>
+				330 mm</li>
+		<li>
+				<strong>Colour:</strong>
+				Chrome</li>
+		<li>
+				<strong>Type:</strong>
+				Adjustable wrenches</li>
+		</ul>
+<ul class="info__lists-not-bullets">
+	<li>
+				<strong>Brand Name:</strong>
+				Wickes</li>
+		<li>
+				<strong>Range Description:</strong>
+				Wrenches</li>
+		</ul>
+</div>
+<h5 class="info__features-header info__features-header-data">
+		Features &amp; benefits</h5>
+	<div class="info__features  info__features-column">
+		<ul class="info__lists-bullets">
+				<li>
+						<span>Made from drop forged steel</span>
+					</li>
+				<li>
+						<span>Smooth running jaw adjustment</span>
+					</li>
+				<li>
+						<span>Chrome plated</span>
+					</li>
+				</ul>
+			<ul class="info__lists-bullets">
+				<li>
+						<span>Sizes: 6", 8" & 10"</span>
+					</li>
+				<li>
+						<span>Tested for corrosion resistance</span>
+					</li>
+				</ul>
+			</div>
+</div></div>
+			</div>
+		<div class="accordion additional-info  info__block" >
+				<h5 class="accordion__header additional-info__header info__header">
+					Customers' gallery</h5>
+				<div class="accordion__content additional-info__content info__content" >
+					<div class="pdp__buyers-gallery" id="buyers-gallery-placeholder" style="overflow:hidden"></div></div>
+			</div>
+		<div class="accordion additional-info  info__block" >
+				<h5 class="accordion__header additional-info__header info__header">
+					Reviews <div class="product-card__reviews review-star info__review-star" id="rating-placeholder"></div></h5>
+				<div class="accordion__content additional-info__content info__content" >
+					<div class="pdp__reviews_snapshot" id="pr-reviewdisplay"></div><div class="pdp__reviews_list" id="pr-list"></div></div>
+			</div>
+		</div>
+</div>
+</div>
+</div>
+		<div class="modal modal-box wisdom-mcfc__modal" id="wisdom-mcfc" role="dialog" tabindex="-1">
+    <div class="modal-dialog modal-box__container" role="document">
+        <div class="modal-box__row justify-content-center">
+            <div class="modal-box__columns">
+                <div class="modal-content modal-box__content">
+                    <div class="modal-header modal-box__header d-none">
+                        <div class="modal-box__inner-row justify-content-center">
+                            <div class="modal-box__inner-columns">
+                                <h3 class="modal-title modal-box__title">
+                                <span aria-hidden="true" class="icon mr-3 link-secondary d-none">
+                                    <span class=""/>
+                                </span>
+                                </h3>
+                            </div>
+                        </div>
+                        <button class="close modal-box__btn-close d-print-none" type="button" data-dismiss="modal"
+                                aria-label="Close">
+                            <span class="icon" aria-hidden="true"/>
+                        </button>
+                    </div>
+                    <div class="modal-body modal-box__body">
+                        <div class="wisdom-modal">
+                            <div class="modal-box__inner-row justify-content-center">
+                                <div class="modal-box__inner-columns">
+                                    <section class="wisdom-modal__wrapper">
+                                        <p class="wisdom__description">
+                                            <span class="wisdom__description-mcfc">
+                                                Please enter your postcode to confirm we can deliver this quantity to your address</span>
+                                        </p>
+                                        <div class="wisdom__add-form">
+                                            <div class="wisdom__col wisdom__input">
+                                                <label>
+                                                    <input type="text"
+                                                           class="tbx wisdom-mcfc-postcode"
+                                                           value=""
+                                                           id="wisdom-mcfc-postcode"
+                                                           name="wisdom-mcfc-postcode"
+                                                           placeholder="">
+                                                </label>
+                                            </div>
+                                            <p class="wisdom__error">
+                                                Check that you entered a valid postcode.</p>
+                                            <div class="wisdom__col">
+                                                <button class="btn btn_full btn-action wisdom__btn-popup-add">
+                                                    <span class="btn__text">
+                                                        Add for Delivery</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </section>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="olapic_specific_widget"></div><div class="seo-widgets component">
+    <div class="container">
+
+            <h2>Related category</h2>
+
+            <div class="seo-widgets__content">
+                <a href="/Products/Tools+Workwear/Hand-Tools/Spanners,-Sockets+Wrenches/c/1002008" class="seo-widgets__items link-primary">
+                        <span class="seo-widgets__items-title">
+                            <span class="seo-widgets__items-title-name">stanley adjustable wrenches</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </span>
+                    </a>
+                </div>
+
+        </div>
+    </div></main>
+
+		
+
+<footer>
+	
+		<link rel="subresource" href="/_ui/addons/b2caddon/responsive/common/js/acc.signup.js" >
+<script type="text/javascript">
+	ACC.scripts.addDeferred({src: '/_ui/addons/b2caddon/responsive/common/js/acc.signup.js', version: '?v=230130040238', async: false, type: 'text/javascript', onload: undefined})
+</script>
+<div id="sign-up-wrapper">
+	<div class="sign-up container">
+		<form id="sign-up-form" class="sign-up__form" novalidate action="/quicksignup/signup" onsubmit="return false">
+			<label class="sign-up__newsletter" for="sign-up-email">
+				<span>Newsletter</span></label>
+			<div class="sign-up__email-container">
+				<input id="sign-up-email" class="sign-up__email" type="email" placeholder="Newsletters sign-up">
+				<div id="sign-up-email-error-msg" class="notification notification_error">
+					<span class="icon notification__icon">
+						<span class="fas fa-exclamation-circle"></span>
+					</span>
+					Please enter a valid email address</div>
+				<button id="sign-up-email-submit-btn" class="btn sign-up__submit">
+                	<i class="far fa-long-arrow-right"></i>
+                </button>
+			</div>
+			  <div class="sign-up__link"><span>Sign Up</span></div>
+		</form>
+		<div id="sign-up-thank-you-msg" class="sign-up__thank-you-msg-container">
+			<div class="sign-up__thank-you-msg">
+				<span class="fas fa-check" aria-hidden="true"></span>Thank you for signing up for emails</div>
+		</div>
+	</div>
+</div>
+
+	
+		<div class="footer-menu__wrap">
+    <div class="footer-menu container">
+        <div class="footer-menu__inner">
+        <div class="accordion">
+    <h5 class="accordion__header">
+        <span class="icon accordion__header-icon"></span>
+        <span class="accordion__header-text">Help & Support</span>
+    </h5>
+    <div class="accordion__content hidden-state">
+        <div class="accordion__content-inner">
+            <p class="footer-menu__item">
+                        <a href="/contactus" class="footer-menu__link" target="_self">Get In Touch</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/track-my-order" class="footer-menu__link" target="_self">Track My Order</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/deliverydetails" class="footer-menu__link" target="_self">Delivery Information</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/clickcollect" class="footer-menu__link" target="_self">Click & Collect</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/store-finder" class="footer-menu__link" target="_self">Store Locator</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/returnsandrefunds" class="footer-menu__link" target="_self">Returns & Refunds</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/payments" class="footer-menu__link" target="_self">Payments</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/reviewsRatings" class="footer-menu__link" target="_self">Rate & Review</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/trade" class="footer-menu__link" target="_self">TradePro Membership</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/quickanswers" class="footer-menu__link" target="_self">FAQs</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="https://edigitalsurvey.com/survey/enter/s/ESV-vn17-162959841" class="footer-menu__link" target="_blank">Share Your Feedback</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/designconsultant" class="footer-menu__link" target="_self">Free Design Appointment</a>
+                    </p>
+                </div>
+    </div>
+</div><div class="accordion">
+    <h5 class="accordion__header">
+        <span class="icon accordion__header-icon"></span>
+        <span class="accordion__header-text">Our Policies</span>
+    </h5>
+    <div class="accordion__content hidden-state">
+        <div class="accordion__content-inner">
+            <p class="footer-menu__item">
+                        <a href="/pricematchpromise" class="footer-menu__link" target="_self">Price Match Promise</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/sitemap" class="footer-menu__link" target="_self">Sitemap</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/security" class="footer-menu__link" target="_self">Security Online</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/modern-slavery-statement" class="footer-menu__link" target="_self">Modern Day Slavery</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/corporate-governance" class="footer-menu__link" target="_blank">Corporate Governance</a>
+                    </p>
+                </div>
+    </div>
+</div><div class="accordion">
+    <h5 class="accordion__header">
+        <span class="icon accordion__header-icon"></span>
+        <span class="accordion__header-text">About Wickes</span>
+    </h5>
+    <div class="accordion__content hidden-state">
+        <div class="accordion__content-inner">
+            <p class="footer-menu__item">
+                        <a href="https://www.wickescareers.co.uk" class="footer-menu__link" target="_blank">Careers at Wickes</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/companyhistory" class="footer-menu__link" target="_self">Company History</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/community-programme" class="footer-menu__link" target="_self">Wickes Community Programme</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/environmental2" class="footer-menu__link" target="_self">Wickes & the Environment</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/affiliate" class="footer-menu__link" target="_self">Become a Wickes Affiliate</a>
+                    </p>
+                <p class="footer-menu__item">
+                        <a href="/youngminds" class="footer-menu__link" target="_self">Young Minds</a>
+                    </p>
+                </div>
+    </div>
+</div><div class="socials">
+	<ul class="socials__list">
+    <li class="socials__item">
+		    <a href="https://www.instagram.com/wickes/"  target="_blank"class="socials__img"><img loading='lazy' src='https://prod1-wx-wickesprod03-aws-travisperkins-cloud-public.s3.amazonaws.com/sys-master/images/hc0/h51/10318830600222/socials_instagram_color.svg' alt='Instagram Link' title='Instagram Link' class='' /></a></li>
+	<li class="socials__item">
+		    <a href="https://www.facebook.com/Wickes.co.uk"  target="_blank"class="socials__img"><img loading='lazy' src='https://prod1-wx-wickesprod03-aws-travisperkins-cloud-public.s3.amazonaws.com/sys-master/images/h39/h8d/10126716207134/socials_facebook_color.svg' alt='Facebook Link' title='Facebook Link' class='' /></a></li>
+	<li class="socials__item">
+		    <a href="https://www.pinterest.co.uk/wickes/"  target="_blank"class="socials__img"><img loading='lazy' src='https://prod1-wx-wickesprod03-aws-travisperkins-cloud-public.s3.amazonaws.com/sys-master/images/h7b/h86/10126716010526/socials_pinterest_color.svg' alt='Pinterest Link' title='Pinterest Link' class='' /></a></li>
+	<li class="socials__item">
+		    <a href="http://www.youtube.com/user/wickesvideo"  target="_blank"class="socials__img"><img loading='lazy' src='https://prod1-wx-wickesprod03-aws-travisperkins-cloud-public.s3.amazonaws.com/sys-master/images/h3a/h8a/10126716141598/socials_youtube_color.svg' alt='Youtube Link' title='Youtube Link' class='' /></a></li>
+	<li class="socials__item">
+		    <a href="http://www.twitter.com/Wickes"  target="_blank"class="socials__img"><img loading='lazy' src='https://prod1-wx-wickesprod03-aws-travisperkins-cloud-public.s3.amazonaws.com/sys-master/images/h2a/h87/10126716076062/socials_twitter_color.svg' alt='Twitter Link' title='Twitter Link' class='' /></a></li>
+	</ul><div class="socials__young-minds">
+	</div>
+<div class="payments">
+	<ul class="payments__list">
+		<li class="payments__item">
+					<span class="payments-klarna klarna-test-badge-remove">
+                                <klarna-placement
+										data-key="sidebar-promotion-auto-size"
+										data-locale="en-GB"
+								></klarna-placement>
+                            </span>
+						</li>
+			<li class="payments__item">
+					<span class="payments__icons payments-mastercard">Mastercard</span>
+						</li>
+			<li class="payments__item">
+					<span class="payments__icons payments-visa">Visa</span>
+						</li>
+			<li class="payments__item">
+					<span class="payments__icons payments-paypal">PayPal</span>
+						</li>
+			</ul>
+</div></div>
+</div>
+    </div>
+</div>
+	
+		<style>
+    .footer-links__item:empty { display:none; }
+</style>
+
+<div class="footer-links">
+	<ul class="footer-links__list">
+		<li class="footer-links__item"><a href="/privacy"  title="Privacy policy" class="footer-links__link">Privacy policy</a></li>
+		<li class="footer-links__item"><a href="/termsAndConditions"  title="Terms & conditions" class="footer-links__link">Terms & conditions</a></li>
+		<li class="footer-links__item"><a href="https://www.wickesplc.co.uk"  title="Wickes Corporate PLC"  target="_blank"class="footer-links__link">Wickes Corporate PLC</a></li>
+		<li class="footer-links__item"><a href="/cookies"  title="Cookie policy" class="footer-links__link">Cookie policy</a></li>
+		</ul>
+</div>
+
+	
+		<div class="copyright">
+	Copyright © 2023 Wickes.co.uk</div>
+	
+</footer>
+<form name="accessiblityForm">
+			<input type="hidden" id="accesibility_refreshScreenReaderBufferField" name="accesibility_refreshScreenReaderBufferField" value=""/>
+		</form>
+		<div id="ariaStatusMsg" class="skip" role="status" aria-relevant="text" aria-live="polite"></div>
+
+		<script type="text/javascript" src="/_ui/addons/b2caddon/responsive/common/js/lib/js.tag.libs.min.js?v=230130040238"></script>
+
+<script>
+    Date.prototype.toUKDateString = function(options) {
+        return this.toLocaleDateString("en-GB", options);
+    };
+	ACC.flashcookie = {
+        COOKIE_NAME_PREFIX : 'FLASH_',
+        flashCookies : [],
+
+        populateFlashCookies : function() {
+            for(var cookieName in $.cookie()) {
+                if(cookieName && cookieName.indexOf && cookieName.indexOf(this.COOKIE_NAME_PREFIX) === 0) {
+                    this.popFlashCookie(cookieName);
+                }
+            }
+        },
+
+        addFlashCookie : function(name, value) {
+            var cookieName = this.COOKIE_NAME_PREFIX + name;
+            $.cookie(cookieName, value, { path : "/" });
+        },
+
+        popFlashCookie : function(cookieName) {
+            var value = $.cookie(cookieName);
+            $.removeCookie(cookieName, { path : "/" });
+            var name = cookieName.replace(this.COOKIE_NAME_PREFIX, "");
+            this.flashCookies[name] = value;
+        }
+};
+
+ACC.flashcookie.populateFlashCookies();
+$(window).trigger('flashCookiesAreRead');ACC.globalmessages = {
+
+    MessageType: {
+        WARNING: "notification_warning",
+        ERROR: "notification_error"
+    },
+
+    showWarningMessage: function (message) {
+        ACC.globalmessages.showMessage(message, ACC.globalmessages.MessageType.WARNING);
+    },
+
+    showErrorMessage: function (message) {
+        ACC.globalmessages.showMessage(message, ACC.globalmessages.MessageType.ERROR);
+    },
+
+    showMessage: function (message, messageType) {
+        var messageBody = '<div class="container"><div class="notification_general notification ' + messageType + '"><span class="icon notification__icon"><span class="fas fa-exclamation-circle"></span></span>'
+            + message
+            + '<span class="icon notification__close"><span class="far fa-times"></span></span></div></div>';
+        ACC.globalmessages.showMessageWithBody(messageBody);
+    },
+
+    showMessageWithBody: function(messageBody) {
+        var globalMsg = $(".globalMessages");
+        globalMsg.empty();
+        globalMsg.append(messageBody);
+        globalMsg.show();
+
+        var offset = (Wick.OfferBanner ? Wick.OfferBanner.$element.outerHeight(true) : 0),
+        stickyHeaderOffset = ($('body.tp-app').length ? $('.sticky-header-wrapper').height() || 0 : 0);
+
+        $('html, body').animate({
+            scrollTop: globalMsg.offset().top - offset - stickyHeaderOffset - 30
+        }, 500);
+    },
+
+    hideGlobalMessages: function () {
+        $('.globalMessages').empty();
+    }
+
+};
+</script>
+
+<script defer src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"
+                      integrity="sha384-Piv4xVNRyMGpqkS2by6br4gNJ7DXjqk09RmUpJ8jgGtD7zP9yug3goQfGII0yAns"
+                      crossorigin="anonymous"></script>
+    <script defer src="https://static-content.wickes.co.uk/wickes-css@2.65.2/build/js/pdp.bundle.min.js"></script>
+
+<script defer type="text/javascript" src="/_ui/addons/b2caddon/responsive/common/js/popover-mini-basket.js?v=230130040238"></script>
+
+<script async src="/_ui/addons/b2caddon/responsive/common/js/search-suggestions.js?v=230130040238"></script>
+
+<script defer src="https://kit.fontawesome.com/b73abc6840.js" crossorigin="anonymous"></script>
+
+<script type="text/javascript">
+			var powerReviewsPageId = '149054';
+			powerReviewsPageVariantId = '149054';
+			var quantityErrorMessage = "Please enter a number";
+			var reviewOnPDP = true;
+			var productCodeOnPDP = '149054';
+			var pdpPage = true;
+		</script>
+		
+
+
+
+<script type="text/javascript">
+	var powerReviewsAvailable = true;
+</script>
+
+
+
+
+    <script type="text/javascript"
+            src="//ui.powerreviews.com/stable/4.1/ui.js" async>
+    </script>
+    <script type="text/javascript">
+            var powerReviewsApiKey = "1b35c653-d908-40da-8502-29826432b7c8";
+                powerReviewsMerchantId = "213541";
+                powerReviewsMerchantGroupId = "49568";
+                powerReviewsLocale = "en_GB";
+                writePowerReviewMode = "";
+    </script>
+
+    <link rel="subresource" href="/_ui/addons/b2caddon/responsive/common/js/powerreviews.js" >
+<script type="text/javascript">
+    ACC.scripts.addDeferred({src: '/_ui/addons/b2caddon/responsive/common/js/powerreviews.js', version: '?v=230130040238', async: false, type: 'text/javascript', onload: ''})
+</script>
+
+
+
+
+
+
+
+
+<script type="application/ld+json">
+{
+	"@context": "http://schema.org",
+	"@type": "Product",
+	"itemCondition": "https://schema.org/NewCondition",
+	"name": "Adjustable Drop Forged Steel 3 Piece Wrench Set",
+	"sku": "149054",
+	"image": "https://media.wickes.co.uk/is/image/wickes/T3274_149054_00?$normal$",
+	"description": "This 3 piece adjustable wrench set comes in three popular sizes 6&#034;, 8&#034; &amp; 10&#034; of adjustable drop forged steel wrenches for light or heavy duty use. They have a smooth jaw opening action and are Chrome plated for anti corrosion.",
+	"brand": "Wickes",
+    "aggregateRating": {
+        "@type": "AggregateRating",
+        "author": {
+   	        "@type": "Organization",
+            "name": "Power Reviews",
+            "url": "https://www.powerreviews.com/"
+        },
+        "reviewcount": "14",
+        "ratingValue": "4.6"
+    },
+	"offers": {
+		"@type": "Offer",
+		"price": "11.0",
+		"priceCurrency": "GBP",
+		"url": "https://www.wickes.co.uk/Adjustable-Drop-Forged-Steel-3-Piece-Wrench-Set/p/149054"
+	}
+}
+</script>
+<script defer type="text/javascript" src="/_ui/addons/b2caddon/responsive/common/js/lib/productDetailsJavascript.tag.min.js?v=230130040238"></script>
+		<script defer src="/_ui/addons/b2caddon/responsive/common/js/page/pdp.js?v=230130040238"></script>
+		    <script defer src="/_ui/addons/b2caddon/responsive/common/js/acc.pickupinstore.js?v=230130040238"></script>
+            <script defer type="text/javascript"
+                    src="/_ui/addons/b2caddon/responsive/common/js/acc.big-wins.js?v=230130040238"></script>
+            <script defer type="text/javascript"
+                    src="/_ui/addons/b2caddon/responsive/common/js/acc.big-wins-utils.js?v=230130040238"></script>
+
+            <script defer type="text/javascript" src="/_ui/addons/b2caddon/responsive/common/js/acc.product.js?v=230130040238"></script>
+		<script defer type="text/javascript" src="/_ui/addons/b2caddon/responsive/common/js/backinstock.js?v=230130040238"></script>
+		<script defer type="text/javascript" src="/_ui/addons/b2caddon/responsive/common/js/wisdom.js?v=230130040238"></script>
+		<script defer type="text/javascript" src="/_ui/addons/b2caddon/responsive/common/js/lib/jquery.tmpl-1.0.0pre.min.js?v=230130040238"></script>
+        <script defer type="text/javascript" src="/_ui/addons/b2caddon/responsive/common/js/acc.mapstores.js?v=230130040238"></script>
+
+		<script defer type="text/javascript" src="/_ui/addons/b2caddon/responsive/common/js/lib/card-slider-custom.js?v=230130040238"></script>
+		<script>
+			var projectListMaxSize = '100';
+		</script>
+		<script defer type="text/javascript" src="/_ui/addons/b2caddon/responsive/common/js/page/shopping-list.js?v=230130040238"></script>
+
+		
+
+
+
+
+	
+
+
+
+
+
+
+
+
+
+
+ 
+</body>
+</html>
